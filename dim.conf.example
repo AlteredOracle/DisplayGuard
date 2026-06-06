@@ -1,0 +1,8 @@
+[displayguard]
+enabled = true
+darkness = 0.9
+idle_seconds = 600
+sleep_enabled = true
+sleep_darkness = 0.99
+sleep_seconds = 1800
+

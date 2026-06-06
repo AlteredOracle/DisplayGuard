@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=DisplayGuard
+Comment=Screen dimming and display protection manager
+Exec=/usr/bin/python3 /home/alteredoracle/.local/share/displayguard/displayguard.py
+Icon=video-display
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+StartupWMClass=displayguard
