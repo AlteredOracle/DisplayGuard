@@ -16,10 +16,13 @@ A translucent overlay *window* was tried first and does NOT work here: Mutter
 won't blend a normal window's alpha over other windows. Gamma is the right tool.
 
 Config (live-reloaded on change): ~/.config/displayguard/dim.conf, INI-style:
-    [dim]
-    enabled = true
-    darkness = 0.70        ; 0.0 = no dim, 0.90 = darkest allowed (never full black)
-    idle_seconds = 30      ; inactivity before dimming
+    [displayguard]
+    enabled = true         ; stage 1 (dim) on/off
+    darkness = 0.70        ; 0.0 = no dim, 0.99 = darkest allowed (never full black)
+    idle_seconds = 600     ; inactivity before dimming
+    sleep_enabled = true   ; stage 2 (deeper "screen saver" dim) on/off
+    sleep_darkness = 0.99
+    sleep_seconds = 1800   ; inactivity before the deeper dim
 
 Live preview from the GUI (while dragging the darkness slider), via this
 daemon's session-bus object org.displayguard.Dim /org/displayguard/Dim:
@@ -74,26 +77,25 @@ class DimConfig:
         # Stage 1 — "night mode" replacement: dim after a short idle.
         self.enabled = True
         self.darkness = 0.70
-        self.idle_seconds = 30
+        self.idle_seconds = 600
         # Stage 2 — "sleep" replacement: dim deeper after a longer idle. Still a
         # gamma dim (never DPMS power-off), so it can't crash the HDMI chip.
         self.sleep_enabled = True
         self.sleep_darkness = 0.99
-        self.sleep_seconds = 300
+        self.sleep_seconds = 1800
 
     def load(self):
         cp = configparser.ConfigParser()
         try:
             cp.read(CONFIG_PATH)
             if cp.has_section("displayguard"):
-                g = cp["displayguard"]
                 self.enabled = cp.getboolean("displayguard", "enabled", fallback=self.enabled)
                 self.darkness = clamp(
                     cp.getfloat("displayguard", "darkness", fallback=self.darkness), 0.0, MAX_DARKNESS)
                 self.idle_seconds = max(
                     5, cp.getint("displayguard", "idle_seconds", fallback=self.idle_seconds))
                 self.sleep_enabled = cp.getboolean(
-                    "dim", "sleep_enabled", fallback=self.sleep_enabled)
+                    "displayguard", "sleep_enabled", fallback=self.sleep_enabled)
                 self.sleep_darkness = clamp(
                     cp.getfloat("displayguard", "sleep_darkness", fallback=self.sleep_darkness),
                     0.0, MAX_DARKNESS)
@@ -256,7 +258,7 @@ class DimDaemon:
         old = (self.cfg.idle_seconds, self.cfg.sleep_seconds,
                self.cfg.sleep_enabled, self.cfg.enabled)
         self.cfg = DimConfig().load()
-        if not self.cfg.enabled:
+        if not self.cfg.enabled and not self.cfg.sleep_enabled:
             self._fade_to(1.0)
         new = (self.cfg.idle_seconds, self.cfg.sleep_seconds,
                self.cfg.sleep_enabled, self.cfg.enabled)
@@ -273,13 +275,16 @@ class DimDaemon:
 
     def _rearm_idle(self):
         # Drop any prior watches so changed timings take effect cleanly.
+        # The two stages are independent: either may be enabled on its own
+        # (e.g. dim = "Never" in the GUI but the screen saver still on).
         self._idle_watch_id = None
         self._sleep_watch_id = None
-        if not self.cfg.enabled:
+        if not self.cfg.enabled and not self.cfg.sleep_enabled:
             return
         # Stage 1: dim after idle_seconds.
-        self._idle_watch_id = self._add_idle_watch(self.cfg.idle_seconds)
-        # Stage 2: deeper "sleep" dim after sleep_seconds (if enabled).
+        if self.cfg.enabled:
+            self._idle_watch_id = self._add_idle_watch(self.cfg.idle_seconds)
+        # Stage 2: deeper "sleep" dim after sleep_seconds.
         if self.cfg.sleep_enabled:
             self._sleep_watch_id = self._add_idle_watch(self.cfg.sleep_seconds)
         if not self._subscribed:
@@ -299,7 +304,7 @@ class DimDaemon:
                 self._arm_active()
         elif fired == self._sleep_watch_id:
             # Stage 2 — sleep (deeper dim). Still gamma, never DPMS/power-off.
-            if self.cfg.enabled and self.cfg.sleep_enabled:
+            if self.cfg.sleep_enabled:
                 self._fade_to(1.0 - self.cfg.sleep_darkness)
                 self._arm_active()
         elif fired == self._active_watch_id:

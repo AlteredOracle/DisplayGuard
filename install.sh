@@ -10,7 +10,7 @@ CONFIG_DIR="$HOME/.config/displayguard"
 mkdir -p "$APP_DIR" "$BIN_DIR" "$SERVICE_DIR" "$DESKTOP_DIR" "$CONFIG_DIR"
 
 sudo apt update
-sudo apt install -y python3-tk xprintidle
+sudo apt install -y python3-gi gir1.2-gtk-3.0
 
 cp displayguard.py "$APP_DIR/"
 cp displayguard_service.py "$APP_DIR/"
@@ -18,19 +18,24 @@ cp displayguard_service.py "$APP_DIR/"
 chmod +x "$APP_DIR/displayguard.py"
 chmod +x "$APP_DIR/displayguard_service.py"
 
-cat > "$CONFIG_DIR/config.ini" <<EOF
+# Seed a default config (the same file the GUI and daemon read), but never
+# overwrite an existing one.
+if [ ! -f "$CONFIG_DIR/dim.conf" ]; then
+    cat > "$CONFIG_DIR/dim.conf" <<EOF
 [displayguard]
 enabled = true
+darkness = 0.70
 idle_seconds = 600
-dim_brightness = 0.3
 sleep_enabled = true
+sleep_darkness = 0.99
 sleep_seconds = 1800
-sleep_brightness = 0.05
 EOF
+fi
 
 cat > "$SERVICE_DIR/displayguard.service" <<EOF
 [Unit]
 Description=DisplayGuard screen dimming service
+After=graphical-session.target
 
 [Service]
 ExecStart=/usr/bin/python3 $APP_DIR/displayguard_service.py
@@ -41,18 +46,7 @@ RestartSec=3
 WantedBy=default.target
 EOF
 
-cat > "$DESKTOP_DIR/displayguard.desktop" <<EOF
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=DisplayGuard
-Comment=Screen dimming and display protection manager
-Exec=python3 $APP_DIR/displayguard.py
-Icon=preferences-desktop-display
-Terminal=false
-Categories=Settings;System;
-StartupNotify=true
-EOF
+sed "s|@APP_DIR@|$APP_DIR|g" displayguard.desktop > "$DESKTOP_DIR/displayguard.desktop"
 
 chmod +x "$DESKTOP_DIR/displayguard.desktop"
 
