@@ -106,7 +106,19 @@ DisplayGuard/
 ├── displayguard.desktop
 ├── dim.conf.example
 ├── install.sh
+├── tests/
+│   ├── test_displayguard_service.py
+│   └── test_install.sh
 └── README.md
+```
+
+## Testing
+
+The tests need no GNOME session or PyGObject (the D-Bus layer is faked), so they run anywhere:
+
+```bash
+python3 -m unittest discover -s tests -v   # daemon logic
+bash tests/test_install.sh                 # installer (sandboxed $HOME)
 ```
 
 ## Requirements
