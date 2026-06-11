@@ -61,6 +61,8 @@ check "dim.conf has no legacy *_brightness keys" \
 check "service unit created" test -f "$SERVICE"
 check "service ordered after graphical-session.target" \
     grep -q '^After=graphical-session.target' "$SERVICE"
+check "service drops privilege escalation (NoNewPrivileges)" \
+    grep -q '^NoNewPrivileges=yes' "$SERVICE"
 check "service ExecStart points at installed daemon" \
     grep -q "ExecStart=/usr/bin/python3 $APP_DIR/displayguard_service.py" "$SERVICE"
 
@@ -106,6 +108,19 @@ bash install.sh > "$SANDBOX/install2.log" 2>&1
 check "re-install exits 0" test $? -eq 0
 check "re-install preserves user-edited dim.conf" \
     grep -q '^darkness = 0.50' "$CONF"
+
+# A $HOME containing sed metacharacters must not corrupt or inject lines
+# into the generated desktop entry.
+export HOME="$SANDBOX/we&ird|home"
+mkdir -p "$HOME"
+bash install.sh > "$SANDBOX/install3.log" 2>&1
+check "install with hostile \$HOME exits 0" test $? -eq 0
+WEIRD_DESKTOP="$HOME/.local/share/applications/displayguard.desktop"
+check "hostile \$HOME desktop entry has the literal path" \
+    grep -qF "Exec=/usr/bin/python3 $HOME/.local/share/displayguard/displayguard.py" \
+    "$WEIRD_DESKTOP"
+check "hostile \$HOME injects no extra desktop entries/keys" \
+    test "$(grep -c '^Exec=' "$WEIRD_DESKTOP")" = "1"
 
 echo
 if [ "$FAILURES" -eq 0 ]; then

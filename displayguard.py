@@ -14,8 +14,9 @@ CONFIG = os.path.expanduser("~/.config/displayguard/dim.conf")
 SERVICE = "displayguard.service"
 
 
-def run(cmd):
-    subprocess.run(cmd, shell=True)
+def run(argv):
+    # Argument list, no shell: nothing here should ever be re-parsed.
+    subprocess.run(argv)
 
 
 class DisplayGuard(Gtk.Window):
@@ -108,8 +109,7 @@ class DisplayGuard(Gtk.Window):
 
     def refresh_status(self):
         result = subprocess.run(
-            "systemctl --user is-active displayguard.service",
-            shell=True,
+            ["systemctl", "--user", "is-active", SERVICE],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True
@@ -217,10 +217,10 @@ class DisplayGuard(Gtk.Window):
             cfg.write(f)
 
         if main_enabled:
-            run(f"systemctl --user enable --now {SERVICE}")
-            run(f"systemctl --user restart {SERVICE}")
+            run(["systemctl", "--user", "enable", "--now", SERVICE])
+            run(["systemctl", "--user", "restart", SERVICE])
         else:
-            run(f"systemctl --user disable --now {SERVICE}")
+            run(["systemctl", "--user", "disable", "--now", SERVICE])
             self.enabled.set_active(False)
 
         self.config = self.load_config()

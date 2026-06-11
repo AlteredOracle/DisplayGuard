@@ -29,6 +29,9 @@ daemon's session-bus object org.displayguard.Dim /org/displayguard/Dim:
     Preview(d level)   -> dim to `level` immediately (ignores idle)
     PreviewEnd()       -> leave preview, restore brightness, resume idle logic
     Reload()           -> re-read the config file now
+Anything on the session bus can call these, so Preview() is failsafed: it
+auto-expires after PREVIEW_TIMEOUT_MS without a PreviewEnd(), restoring
+brightness — a buggy or hostile caller can't wedge the screen near-black.
 """
 import configparser
 import os
@@ -66,6 +69,11 @@ FADE_STEP_MS = 16
 # see enough to move the mouse and undim). This is what keeps "sleep" = 0.99
 # safe — it is near-black but the HDMI link stays fully powered (no DPMS).
 MAX_DARKNESS = 0.99
+# A Preview() that never gets its PreviewEnd() expires after this long. The
+# D-Bus interface is reachable by any same-user process, and while previewing
+# the idle/activity restore logic is suspended — without this cap one stray
+# call could leave the screen stuck near-black.
+PREVIEW_TIMEOUT_MS = 30000
 
 
 def clamp(v, lo, hi):
@@ -118,6 +126,7 @@ class DimDaemon:
         self._active_watch_id = None
         self._subscribed = False
         self._previewing = False
+        self._preview_timeout = None
 
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         self.crtcs = self._discover_crtcs()
@@ -245,13 +254,35 @@ class DimDaemon:
         if method == "Preview":
             level = clamp(params.unpack()[0], 0.0, MAX_DARKNESS)
             self._previewing = True
+            self._arm_preview_timeout()
             self._fade_to(1.0 - level)
         elif method == "PreviewEnd":
-            self._previewing = False
-            self._fade_to(1.0)
+            self._end_preview()
         elif method == "Reload":
             self._reload()
         inv.return_value(None)
+
+    def _arm_preview_timeout(self):
+        self._cancel_preview_timeout()
+        self._preview_timeout = GLib.timeout_add(
+            PREVIEW_TIMEOUT_MS, self._on_preview_expired)
+
+    def _cancel_preview_timeout(self):
+        if self._preview_timeout:
+            GLib.source_remove(self._preview_timeout)
+            self._preview_timeout = None
+
+    def _end_preview(self):
+        self._cancel_preview_timeout()
+        self._previewing = False
+        self._fade_to(1.0)
+
+    def _on_preview_expired(self):
+        print("dim: preview expired without PreviewEnd(), restoring",
+              flush=True)
+        self._preview_timeout = None
+        self._end_preview()
+        return False
 
     # --- config reload -----------------------------------------------------
     def _reload(self):

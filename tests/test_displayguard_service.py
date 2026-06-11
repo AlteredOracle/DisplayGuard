@@ -33,7 +33,7 @@ class FakeVariantType:
 
 class FakeGLibState:
     def __init__(self):
-        self.timeouts = {}   # source id -> callback
+        self.timeouts = {}   # source id -> (interval_ms, callback)
         self.next_id = 1
 
 
@@ -42,7 +42,7 @@ _glib_state = FakeGLibState()
 
 def _timeout_add(interval_ms, fn):
     _glib_state.next_id += 1
-    _glib_state.timeouts[_glib_state.next_id] = fn
+    _glib_state.timeouts[_glib_state.next_id] = (interval_ms, fn)
     return _glib_state.next_id
 
 
@@ -51,15 +51,33 @@ def _source_remove(source_id):
     return True
 
 
-def flush_timeouts(max_iter=100000):
-    """Run scheduled timeout callbacks until none remain (fades settle)."""
+def flush_timeouts(max_iter=100000, max_interval=999):
+    """Run short-interval timeout callbacks (fade ticks) until they settle.
+
+    Long timers — like the daemon's preview-expiry failsafe — are left
+    pending so tests can fire them explicitly with fire_long_timeouts().
+    """
     for _ in range(max_iter):
-        if not _glib_state.timeouts:
+        pending = [(tid, fn) for tid, (iv, fn) in _glib_state.timeouts.items()
+                   if iv <= max_interval]
+        if not pending:
             return
-        tid, fn = next(iter(_glib_state.timeouts.items()))
+        tid, fn = pending[0]
         if not fn():
             _glib_state.timeouts.pop(tid, None)
     raise AssertionError("timeout sources did not settle")
+
+
+def long_timeouts():
+    return [tid for tid, (iv, _) in _glib_state.timeouts.items() if iv > 999]
+
+
+def fire_long_timeouts():
+    """Simulate expiry of pending long timers (e.g. the preview failsafe)."""
+    for tid in long_timeouts():
+        interval, fn = _glib_state.timeouts[tid]
+        if not fn():
+            _glib_state.timeouts.pop(tid, None)
 
 
 class FakeReply:
@@ -318,6 +336,33 @@ class DaemonTests(unittest.TestCase):
                           FakeReply(()), FakeInvocation())
         flush_timeouts()
         self.assertAlmostEqual(daemon.brightness, 1.0)
+        # PreviewEnd must cancel the expiry failsafe, not leave it pending.
+        self.assertEqual(long_timeouts(), [])
+
+    def test_preview_expires_without_previewend(self):
+        # Failsafe: the D-Bus interface is callable by any same-user
+        # process, so a Preview() that never sends PreviewEnd() must not
+        # leave the screen wedged near-black.
+        daemon, bus = self.make_daemon(enabled="true")
+        daemon._dbus_call(None, None, None, None, "Preview",
+                          FakeReply((0.99,)), FakeInvocation())
+        flush_timeouts()
+        self.assertAlmostEqual(daemon.brightness, 0.01)
+        self.assertTrue(daemon._previewing)
+        self.assertEqual(len(long_timeouts()), 1)
+        fire_long_timeouts()
+        flush_timeouts()
+        self.assertAlmostEqual(daemon.brightness, 1.0)
+        self.assertFalse(daemon._previewing)
+
+    def test_repeated_previews_rearm_single_expiry_timer(self):
+        daemon, bus = self.make_daemon(enabled="true")
+        for level in (0.2, 0.5, 0.8):
+            daemon._dbus_call(None, None, None, None, "Preview",
+                              FakeReply((level,)), FakeInvocation())
+            flush_timeouts()
+        self.assertEqual(len(long_timeouts()), 1)
+        self.assertAlmostEqual(daemon.brightness, 0.2)
 
     def test_reload_restores_only_when_both_stages_off(self):
         daemon, bus = self.make_daemon(enabled="true", darkness="0.70",

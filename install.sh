@@ -41,12 +41,16 @@ After=graphical-session.target
 ExecStart=/usr/bin/python3 $APP_DIR/displayguard_service.py
 Restart=always
 RestartSec=3
+NoNewPrivileges=yes
 
 [Install]
 WantedBy=default.target
 EOF
 
-sed "s|@APP_DIR@|$APP_DIR|g" displayguard.desktop > "$DESKTOP_DIR/displayguard.desktop"
+# Escape sed replacement metacharacters so an unusual $HOME (containing
+# '|', '&' or '\') can't corrupt or inject lines into the desktop entry.
+APP_DIR_SED=$(printf '%s' "$APP_DIR" | sed 's/[&\\|]/\\&/g')
+sed "s|@APP_DIR@|$APP_DIR_SED|g" displayguard.desktop > "$DESKTOP_DIR/displayguard.desktop"
 
 chmod +x "$DESKTOP_DIR/displayguard.desktop"
 
